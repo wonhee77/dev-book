@@ -660,7 +660,7 @@ null은 스스로와 일치하는 것을 찾는다.
 > db.food.find({"fruit" : ["apple", "banana", "peach"]})
 ```
 
-배열 내 특정 요소를 쿼리하려면 key.index 구문을 이요해 순서를 지정한다.
+배열 내 특정 요소를 쿼리하려면 key.index 구문을 이용해 순서를 지정한다.
 
 ```jsx
 > db.food.find({"fruit.2" : "peach"})
