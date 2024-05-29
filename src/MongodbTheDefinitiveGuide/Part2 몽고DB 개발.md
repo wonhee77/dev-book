@@ -548,3 +548,157 @@ collMod 명령어를 이용해 “expiredAfterSeconds”를 변경할 수 있다
 ## 6.5 GridFS로 파일 저장하기
 
 GridFS는 몽고DB에 대용량 이진 파일을 저장하는 매커니즘이다.
+
+## 7장 집계 프레임워크
+
+## 7.1 파이프라인, 단계 및 조정 가능 항목
+
+집계 프레임워크는 몽고DB 내 분석 도구 모음으로, 하나 이상의 컬렉션에 있는 도큐먼트에 대한 분석을 수행하게 해준다.
+
+집계 프레임워크는 파이프라인 개념을 기반으로 한다. 모든 단계의 입력과 출력은 도큐먼트 또는 도큐먼트 스트림이다.
+
+집계 파이프라인의 개별 단계는 데이터 처리 단위다. 입력 도큐먼트 스트림을 한 번에 하나씩 가져와서, 각 도큐먼트를 하나씩 처리하고, 출력 도큐먼트 스트림을 하나씩 생성한다.
+
+각 단계는 knobs 또는 tunalbles 셋을 제공한다. 이 항목들을 조정해 각 단계를 매개변수로 지정함으로써 원하는 작업을 수행할 수 있다.
+
+## 7.2 단계 시작하기: 익숙한 작업들
+
+일치, 선출, 정렬, 건너뛰기, 제한 단계를 살펴보자.
+
+2004년에 설립된 회사를 모두 찾는 간단한 필터를 수행해보자.
+
+```jsx
+> db.companies.aggregate([
+	{$match : {founded_year: 2004}}}])
+```
+
+이는 find를 사용하는 다음 작업과 동일하다.
+
+```jsx
+> db.companies.find({founded_year: 2004})
+```
+
+```jsx
+> db.companies.aggregate([
+	{$match : {founded_year: 2004}},
+	{$project : {
+		_id : 0,
+		name: 1,
+		founded_year: 1
+		}}
+	])
+```
+
+id는 제거하고 이름과 설립연도만 가져오게 하였다.
+
+```jsx
+> db.companies.aggregate([
+	{$match : {founded_year: 2004}},
+	{$limit : 5},
+	{$project : {
+		_id : 0,
+		name: 1,
+		founded_year: 1
+		}}
+	])
+```
+
+limit을 사용하여 제한을 선출 단계 이전에 수행하도록 파이프라인을 구축했다. 선출 이후에 제한을 둘수도 있지만 결과를 제한하기 전에 선출 단계를 통해 수백 개의 도큐먼트를 전달해야한다.
+
+```jsx
+> db.companies.aggregate([
+	{$match : {founded_year: 2004}},
+	{$sort: {name : 1}},
+	{$limit : 5},
+	{$project : {
+		_id : 0,
+		name: 1,
+		founded_year: 1
+		}}
+	])
+```
+
+제한하기 전에 정렬을 먼저 진행하였다. sort 이전에 skip을 넣어 개수를 건너뛸 수도 있다.
+
+## 7.3 표현식
+
+**불리언 표현식**
+
+AND, OR, NOT 표현식을 쓸 수 있다.
+
+집합 표현식
+
+배열을 집합으로 사용하여 2개 이상의 집합의 교집합이나 합집합을 얻을 수 있다.
+
+비교 표현식
+
+비교 표현식을 통해 다양한 유형의 범위 필터를 표현할 수 있다.
+
+산술 표현식
+
+ceiling, floor, 자연 로그, 로그를 계산할 수 있고 산술 연산을 수행할 수 있다.
+
+문자열 표현식
+
+concatenate, substring 검색, 대소문자 및 텍스트 검색과 관련된 작업을 수행할 수 있다.
+
+배열 표현식
+
+배열 요소를 필터링하거나, 분할, 특정 배열에서 값의 범위를 가져오는 등 조작하는 데 유용하다.
+
+가변적 표현식
+
+리터럴, 날짜 값 구문 분석을 위한식, 조건식을 사용한다.
+
+누산기
+
+합계, 기술 통계 및 기타 여러 유형의 값을 계산하는 기능을 제공한다.
+
+## 7.4 $project
+
+중첩 필드를 승격하는 방법을 살펴보자.
+
+```jsx
+ > db.companies.aggregate([
+	 {$match : {"funding_rounds.investmensts.financial_org.permalink" : "greylock"}},
+	 {$project: {
+		 _id: 0,
+		 name: 1,
+		 ipo: "$ipo.pub_year",
+		 valudation : "$ipo.valuation_amount",
+		 funders: "$funding_rounds.investments.financial_org.permalink"
+		}}
+	]).pretty()
+```
+
+## 7.5 $unwind
+
+집계 파이프라인에서 배열 필드로 작업할 때는 종종 하나 이상의 unwind 단계를 포함해야 한다. 이를 통해 지정된 배열 필드의 각 요소에 대해 출력 도큐먼트가 하나씩 있는 출력을 생성할 수 있다.
+
+하나의 키에 값이 3개가 있는 경우 unwind를 하면 3개의 도큐먼트가 출력된다.
+
+```jsx
+ > db.companies.aggregate([
+	 {$match : {"funding_rounds.investmensts.financial_org.permalink" : "greylock"}},
+	 {$unwind: "$funding_rounds"},
+	 {$project: {
+		 _id: 0,
+		 name: 1,
+		 amount: "$funding_rounds.raised_amount",
+		 year: "$funding_rounds.funded_year"
+		}}
+	]).pretty()
+```
+
+unwind 단계는 입력으로 받은 모든 도큐먼트 사본을 생성한다. “funding_rounds” 필드를 제외한 모든 필드는 키와 값이 동일하다. unwind를 하지 않으면 “funding_rounds” 배열의 모든 요소에 대해 “raised_amount”, “funded_year”에 접근한다. 따라서 “amount”와 “year” 둘 다에 대한 배열이 있는 도큐먼트를 생성한다.
+
+project에 “funding_rounds.investments.financial_org.permalink”를 포함한다면 greylock이 포함된 모든 investments를 가져오고 배열로 나타낸다.
+
+```jsx
+> db.companies.aggregate([
+	 {$match : {"funding_rounds.investmensts.financial_org.permalink" : "greylock"}},
+	 {$unwind: "$funding_rounds"},
+	 {$match : {"funding_rounds.investmensts.financial_org.permalink" : "greylock"}},
+```
+
+위와 같이 unwind와 match의 위치를 바꿔주면 전개를 먼저 하기 때문에 원하는 값을 얻을 수 있지만 풀스캔을 하게되니 match로 greylock이 참여한 투자를 먼저 거르면 된다.
