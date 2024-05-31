@@ -702,3 +702,122 @@ project에 “funding_rounds.investments.financial_org.permalink”를 포함한
 ```
 
 위와 같이 unwind와 match의 위치를 바꿔주면 전개를 먼저 하기 때문에 원하는 값을 얻을 수 있지만 풀스캔을 하게되니 match로 greylock이 참여한 투자를 먼저 거르면 된다.
+
+## 7.6 배열 표현식
+
+```jsx
+> db.companies.aggregate([
+{ $match: {"funding_rounds.investments.financial_org.permalink": "greylock"} },
+{ $project: {
+	_id: 0,
+	name: 1,
+	founded_year: 1,
+	rounds: { $filter: {
+		input: "$funding_rounds",
+		as: "round",
+		cond: { $gte: ["$$round.raised_amount", 100000000] } } }
+},
+{ $match: {"rounds.investments.financial_org.permalink": "greylock" } },
+	]).pretty()
+
+```
+
+rounds 필드는 필터 표현식을 사용한다. $filter 연산자는 배열 필드와 함께 작동하도록 설계됐다.
+
+$filter의 첫 번째 옵션은 input이며 단순히 배열을 지정한다. 다음으로 나머지 필터 표현식 전체에서 “funding_rounds” 배열에 사용할 이름을 지정한다. 세 번째 옵션으로는 조건을 지정한다.
+
+조건은 입력으로 지정한 배열을 필터링하는 기준으로 제공해 서브셋을 선택하도록 한다. $$는 작업 중인 표현식 내에서 정의된 변수를 참조하는 데 사용한다.
+
+$arrayElemAt 연산자를 사용하면 배열 내 특정 슬록에서 요소를 선택할 수 있다.
+
+$slice 표현식은 $arrayElemAt와 관련 있다. 표현식을 사용하면 배열의 특정 인덱스에서 시작해 하나뿐 아니라 여러 항목을 순서대로 반환할 수 있다.
+
+배열의 크기는 $size 연산자로 수행할 수 있다.
+
+## 7.7 누산기
+
+집계 프레임워크가 제공하는 누산기를 사용하면 특정 필드의 모든 값 합산($sum), 평균 계산($avg) 등의 작업을 할 수 있다. $first와 $last도 누산기로 간주하는데 표현식이 사용된 단계를 통과하는 모든 도큐먼트 내 값을 고려하기 때문이다. $max와 $min은 도큐먼트 스트림을 고려해 표시되는 값 중 하나만 저장하는 누산기다. $mergeObjects를 사용하면 여러 도큐먼트를 하나의 도큐먼트로 결합할 수 있다.
+
+배열용 누산기로 도큐먼트가 파이프라인 단계를 통과할 때 배열에 값을 $push할 수 있다.
+
+$addToSet은 $push와 유사하지만 결과 배열에 중복 값이 포함되지 않게 한다는 차이가 있다.
+
+### 7.7.1 선출 단계에서 누산기 사용
+
+```jsx
+> db.companies.aggregate([
+	{$match : {"funding_rounds" : {$exists : true, $ne : []}}},
+	{$project : {
+		_id : 0,
+		name : 1,
+		largest_round : {$max : "$funding_rounds.raised_amount"}
+		}}
+	])
+```
+
+선출 단계에서 누산기는 배열값 필드에서 작동해야한다.
+
+## 7.8 그룹화 소개
+
+그룹 단계는 SQL GROUP BY 명령과 유사한 기능을 수행한다.
+
+```jsx
+> db.companies.aggregate([
+	{$group : {
+		_id : {founded_year : "$founded_year"},
+		average_number_of_employees : {$avg : "$number_of_employees"}
+	}},
+	{$sort : {average_number_of_employees: -1}}
+	])
+```
+
+설립 연도를 기준으로 회사를 합친 다음 연도마다 평균 직원수를 계산한다.
+
+그룹 단계의 기본은 도큐먼트의 일부로 지정하는 “_id” 필드다.
+
+### 7.8.1 그룹 단계의 _id 필드
+
+```jsx
+> db.companies.aggregate([
+{$match : {founded_year : {$age: 2013}}},
+{$group : {
+	_id : {founded_year : "$founded_year"},
+	companies : {$push : "$name"}
+}},
+{$sort : {"_id.founded_year" : 1}}
+]).pretty()
+```
+
+의미를 명확하게 하기 위해 _id 필드안에 founded_year이라는 레이블을 넣었다.
+
+경우에 따라 여러 필드로 구성된 도큐먼트 _id 값인 방식을 사용해야 할 수도 있다.
+
+### 7.8.2 그룹 vs. 선출
+
+```jsx
+> db.companies.aggregate([
+  { $match: { funding_rounds: { $ne: [ ] } } },
+  { $unwind: "$funding_rounds" },
+  { $sort: { "funding_rounds.funded_year": 1,
+             "funding_rounds.funded_month": 1,
+             "funding_rounds.funded_day": 1 } },
+  { $group: {
+      _id: { company: "$name" },
+      funding: {
+        $push: {
+          amount: "$funding_rounds.raised_amount",
+          year: "$funding_rounds.funded_year"
+        }
+      }
+    }
+  },
+]).pretty()
+```
+
+$push 표현식은 그룹 단계에서만 작동한다. 그룹 단계가 도큐먼트의 입력 스트림을 가져와 각 도큐먼트를 차례로 처리해 값을 축적하도록 설계됐기 때문이다. 반면에 선출 단계는 입력 스트림의 각 도큐먼트에 대해 개별적으로 작동한다.
+
+$push와 마찬가지로 선출 단계에서는 $first와 $last를 사용할 수 없다. 선출 단계는 해당 단계를 통해 스트리밍되는 여러 도큐먼트를 기반으로 값을 누적하도록 설계되지 않았기 때문이다.
+
+## 7.9 집계 파이프라인 결과를 컬렉션에 쓰기
+
+집계 파이프라인에서 생성된 도큐먼트를 컬렉션에 쓸 수 있는 두 가지 단계로 $out과 $merger가 있다.
